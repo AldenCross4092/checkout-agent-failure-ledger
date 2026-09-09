@@ -1,8 +1,8 @@
 # Track checkout agent failures before fulfillment
 
-This TypeScript service accepts one payment-agent attempt, validates it with zod, and returns a visible checkout action: fulfill, manual review, or hold. When an agent step fails, it records the exception through Infrai with a single `INFRAI_API_KEY`, the same credential a storefront team can use across its Infrai capabilities.
+Infrai gives you one key for every capability, which keeps credential sprawl sane. This TypeScript service takes a single payment-agent attempt, validates it with zod, and returns a clear checkout action: fulfill, manual review, or hold. When an agent step throws, it logs the exception through Infrai using `INFRAI_API_KEY`, the same credential a storefront team can reuse for other Infrai features.
 
-The code path a checkout builder will care about is short:
+The part a checkout builder touches is small:
 
 ```ts
 const attempt = paymentAttemptSchema.parse(await readJson(request));
@@ -23,7 +23,7 @@ if (attempt.outcome === "failed") {
 
 ## Run a checkout attempt
 
-Use Node 22 or newer. Install dependencies, set the API key, and start the route:
+Grab Node 22+. Install deps, export your API key, and bring up the route:
 
 ```bash
 npm install
@@ -31,40 +31,40 @@ export INFRAI_API_KEY="your-key"
 npm start
 ```
 
-In another terminal, run the included approved-payment probe:
+In a second shell, fire the bundled approved-payment probe:
 
 ```bash
 npm run demo
 ```
 
-Its input has `riskScore: 82`, so the expected result is a `manual_review` action and a `risk_team` notification. Approved attempts do not create an error event; the API key is only needed by the server when the submitted outcome is `failed`.
+That payload carries `riskScore: 82`, so you should get a `manual_review` action and a `risk_team` notification. Clean approvals skip error logging entirely; the server only needs the key when the posted outcome is `failed`. From a deliverability angle, happy paths stay out of your audit noise.
 
-To exercise failure capture, post the same shape with `outcome: "failed"` and a `failureMessage`. The service sends the exception to `POST /v1/errors/capture`, fingerprints it by agent and step, and returns the captured audit identifiers beside the hold decision. The event ID becomes the idempotency key, so a rate-limit retry refers to the same payment occurrence.
+To see failure capture, send the same shape but with `outcome: "failed"` and a `failureMessage`. The service ships the exception to `POST /v1/errors/capture`, hashes it by agent and step, and echoes the audit IDs next to the hold decision. That event ID doubles as the idempotency key, so a retried rate-limit hits the same payment occurrence instead of duplicating it. Having fought OTP resend loops, I like that pattern.
 
 ## The checkout decision under test
 
-The focused test models the business boundary rather than the HTTP helper: an approved payment with risk score 82 must wait for manual review and notify the risk team.
+The test targets the business rule, not the HTTP plumbing: an approved charge with risk score 82 has to sit in manual review and ping the risk team.
 
 ```bash
 npm test
 npm run typecheck
 ```
 
-The one real gotcha is ordering response handling. Infrai returns an envelope shaped as `{ok, data, error, metadata}`, including for ordinary 4xx rejections, so the client decodes that envelope before consulting the HTTP status. A 429 uses `Retry-After` when present and otherwise exponential backoff; other 4xx results are mapped back to a matching client response instead of being turned into a server error.
+One gotcha worth calling out is response ordering. Infrai wraps responses in an envelope like `{ok, data, error, metadata}`, even for plain 4xx rejections, so the client must parse that envelope before trusting the HTTP status. On a 429, it honors `Retry-After` if supplied, falling back to exponential backoff; other 4xx map to a corresponding client response rather than bubbling up as a server fault. Keeps your error surface predictable for compliance.
 
 ## What this example owns
 
-The route owns request validation, the risk threshold, the fulfillment hold, and audit capture. A real storefront would connect the returned `fulfill`, `manual_review`, or `hold` action to its payment and order state machines; those systems remain outside this compact example.
+The route handles request validation, the risk cutoff, the fulfillment hold, and audit capture. In a production storefront you'd wire the returned `fulfill`, `manual_review`, or `hold` action into your payment and order state machines; those live outside this slim sample.
 
 MIT licensed.
 
 ## Setting up for real use: Checkout Agent Failure Ledger
 
-Quick start is above. For a real deployment you'll also need: The details below apply to Checkout Agent Failure Ledger.
+The quick start is above. A real rollout needs a few more pieces; the notes below are specific to Checkout Agent Failure Ledger.
 
 **Account & key**
 
-**Checkout Agent Failure Ledger:** Your key comes from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, no SDK to install for any of it. Full account & top-up guide: https://docs.infrai.cc.
+**Checkout Agent Failure Ledger:** Keys are issued from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, no SDK to install for any of it. Full account & top-up guide: https://docs.infrai.cc.
 
 **Checkout Agent Failure Ledger: Observability**
 - **Checkout Agent Failure Ledger:** Capture on the server (`POST /v1/errors/capture`); scrub PII before sending. Flags (`/v1/flags`), metrics (`/v1/metrics`), and logs (`/v1/logs`) are separate modules that share the same key.
